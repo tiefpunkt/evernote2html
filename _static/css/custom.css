@@ -1,0 +1,31 @@
+header {
+  background: green;
+  color: white;
+  padding: 2em 0 0.5em 0;
+  margin-bottom: 1em;
+}
+.header-inner {
+  text-align: center;
+}
+textarea {
+  resize: none;
+  width: 100%;
+  height: auto;
+  min-height: 4em;
+}
+
+footer {
+  margin: 1em 0 0.5em 0;
+  text-align: center;
+  color: darkgrey;
+  font-size: 0.8em;
+}
+#updated_wrap {
+  font-size: 0.9em;
+  text-align: right;
+}
+.e2h-metadata {
+    border-bottom: 1px lightgrey solid;
+    margin-bottom: 1em;
+    padding-bottom: 0.5em;
+}

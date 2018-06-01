@@ -6,9 +6,12 @@ import hmac
 import hashlib
 import pystache
 import argparse
-
+from datetime import datetime,timezone
+from distutils import dir_util
 from pbkdf2 import PBKDF2
 from Crypto.Cipher import AES
+
+VERSION = "0.2"
 
 # https://gist.github.com/seanh/93666
 def format_filename(s):
@@ -62,6 +65,8 @@ parser = argparse.ArgumentParser(description='Evernote Export to HTML converter'
 parser.add_argument('-i', '--input', required=True, help='Input File')
 parser.add_argument('-o', '--output', help='Output Directory', default="out")
 parser.add_argument('-p', '--password', help='Password for decryption')
+parser.add_argument('-n', '--note', help="Title of a single note to parse")
+parser.add_argument('-H', '--headline', default="Evernote2HTML")
 args = parser.parse_args()
 
 #file_in = "lnwsoft-test.enex"
@@ -83,12 +88,18 @@ renderer = pystache.Renderer()
 
 notes_metadata = []
 
+if args.note:
+    notes = [x for x in notes if x.title.text == args.note]
+
 for note in notes:
     # Metadata
     title = note.title.text
     created_at = note.created.text
     updated_at = note.updated.text
-    author = note.find("note-attributes").author.text
+    try:
+        author = note.find("note-attributes").author.text
+    except:
+        author = "(unknown)"
     filename_base = format_filename(title)
 
     print("- %s (%s)" % (title, author))
@@ -99,8 +110,6 @@ for note in notes:
         mimetype = resource.mime.text
         file_ext = mimetypes.guess_extension(mimetype)
         data = base64.b64decode(resource.data.text)
-        width = resource.width.text
-        height = resource.height.text
 
         file_out = "%s_%04d%s" % (filename_base, len(resources), file_ext)
 
@@ -114,10 +123,15 @@ for note in notes:
         resources[hash] = {
             "hash": hash,
             "filename": file_out,
-            "width":width,
-            "height":height
-        }
-
+            "mimetype": mimetype
+            }
+        try:
+            width = resource.width.text
+            resources[hash]["width"] = width
+            height = resource.height.text
+            resources[hash]["height"] = height
+        except:
+            pass
 
 
     # Note Content
@@ -130,17 +144,27 @@ for note in notes:
         if not media["hash"] in resources:
             print("  - %s not found" % media["hash"])
             continue
-        new_tag = innersoup.new_tag("img")
-        new_tag["src"] = resources[media["hash"]]["filename"]
-        new_tag["width"] = resources[media["hash"]]["width"]
-        new_tag["height"] = resources[media["hash"]]["height"]
-        media.replaceWith(new_tag)
+        if resources[media["hash"]]["mimetype"].startswith("image"):
+            new_tag = innersoup.new_tag("img")
+            new_tag["src"] = resources[media["hash"]]["filename"]
+            new_tag["width"] = resources[media["hash"]]["width"]
+            new_tag["height"] = resources[media["hash"]]["height"]
+            media.replaceWith(new_tag)
+        else:
+            new_tag = innersoup.new_tag("a")
+            new_tag["href"] = resources[media["hash"]]["filename"]
+            new_tag.string = resources[media["hash"]]["filename"]
+            media.replaceWith(new_tag)
 
     ## Crypto in Node Content
     print("  - decrypting: ", end="", flush=True)
     for crypto in content.find_all("en-crypt"):
         decoded = en_decrypt(crypto.text, args.password)
-        new_tag = BeautifulSoup(decoded, "html.parser")
+        try:
+            new_tag = BeautifulSoup(decoded, "html.parser")
+        except:
+            print("ERROR during encoding: %s" % decoded)
+            new_tag = BeautifulSoup("<i>(error during decoding encrypted area)</i>", "html.parser")
         crypto.replace_with(new_tag)
         print(".", end="", flush=True)
     print()
@@ -152,7 +176,12 @@ for note in notes:
     out = renderer.render(notes_template, {
         "title": title,
         "author": author,
-        "content": str(content)
+        "updated_at": updated_at,
+        "created_at": created_at,
+        "content": str(content),
+        "headline": args.headline,
+        "e2h_version": VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat()
     })
 
     with open("%s/%s" % (args.output, file_out) ,"w") as f:
@@ -162,9 +191,21 @@ for note in notes:
         "title": title,
         "filename": file_out
     })
+notes_metadata_sorted = sorted(notes_metadata, key=lambda k: k['title'].lower())
+notes_links = "\n".join(map(lambda x: "<li><a href='%s'>%s</a></li>" % (x["filename"],x["title"]), notes_metadata_sorted))
 
-notes_links = "\n".join(map(lambda x: "<li><a href='%s'>%s</a></li>" % (x["filename"],x["title"]), notes_metadata))
-out = "<html><head><title>Evernote Export</title></head><body><h1>Evernote Export</h1><p><i>%s Notes</i></p><ul>%s</ul></body></html>" % (len(notes), notes_links)
+with open("_templates/index.html", "r") as f:
+    index_template = pystache.parse(f.read())
+
+out = renderer.render(index_template, {
+    "headline": args.headline,
+    "notes": notes_metadata_sorted,
+    "note_counter": len(notes_metadata_sorted),
+    "e2h_version": VERSION,
+    "generated_at": datetime.now(timezone.utc).isoformat()
+})
 
 with open("%s/index.html" % args.output,"w") as f:
     f.write(out)
+
+dir_util.copy_tree("_static", args.output)
